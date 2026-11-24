@@ -1,0 +1,85 @@
+name: Repack Obsidian ARM64
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repack:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Find latest official version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh api repos/obsidianmd/obsidian-releases/releases/latest --jq .tag_name)"
+          version="${tag#v}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip an already-published version
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${TAG} already exists."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install squashfs tools
+        if: steps.existing.outputs.published != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes squashfs-tools
+
+      - name: Download official packages
+        if: steps.existing.outputs.published != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          curl --fail --location --retry 3 \
+            "https://github.com/obsidianmd/obsidian-releases/releases/download/v${VERSION}/obsidian_${VERSION}_amd64.deb" \
+            --output "obsidian_${VERSION}_amd64.deb"
+          curl --fail --location --retry 3 \
+            "https://github.com/obsidianmd/obsidian-releases/releases/download/v${VERSION}/Obsidian-${VERSION}-arm64.AppImage" \
+            --output "Obsidian-${VERSION}-arm64.AppImage"
+
+      - name: Build ARM64 package
+        if: steps.existing.outputs.published != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash ./repack-arm64.sh "$VERSION"
+
+      - name: Verify package architecture
+        if: steps.existing.outputs.published != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          package="obsidian_${VERSION}_arm64.deb"
+          test -s "$package"
+          architecture="$(dpkg-deb -f "$package" Architecture)"
+          test "$architecture" = arm64
+          echo "Verified ${package} (${architecture})"
+
+      - name: Publish GitHub release
+        if: steps.existing.outputs.published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$TAG" "obsidian_${VERSION}_arm64.deb" \
+            --title "Obsidian ${VERSION} ARM64" \
+            --notes "Repacked ARM64 Debian package built from the official Obsidian ${VERSION} AMD64 deb package and ARM64 AppImage."
