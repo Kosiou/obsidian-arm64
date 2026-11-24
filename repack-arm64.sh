@@ -4,6 +4,7 @@ set -euo pipefail
 #
 # Repackage Obsidian AMD64 .deb into ARM64 .deb
 # by swapping in binaries from the ARM64 AppImage.
+# Based on edyfox/obsidian-deb-arm64, with block-based squashfs copying added here.
 #
 
 if [[ -z "${1:-}" ]]; then
